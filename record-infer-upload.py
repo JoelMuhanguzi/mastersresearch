@@ -28,11 +28,10 @@ class_names = {
 
 # Load the model from the directory
 print(f"Loading Model Into Memory")
-yamnet_model = tf.saved_model.load("embedmodel")
+noiseclassifier_model = tf.saved_model.load("embedmodel")
 print(f"Model Loaded successfully")
 
 # Ensure the audio file is sampled correctly
-@tf.function(reduce_retracing=True)
 def load_wav_16k_mono(filename):
     """ Load a WAV file, convert it to a float tensor, resample to 16 kHz single-channel audio. """
     file_contents = tf.io.read_file(filename)
@@ -43,7 +42,7 @@ def load_wav_16k_mono(filename):
     return wav
 
 #Credentials to interface with Sunbird Metrics API
-device_id = 'SB1001' 
+device_id = 'NOISE-CLASSIFIER' 
 file_name = 'inference_results.txt'
 # Create a dictionary with the parameters to send
 data = {
@@ -57,63 +56,62 @@ print(f"Recording and Inference - 10 Min Interval")
 print(f"Uploading Inference File - 1 hour Interval")
 print(f"Device ID- {device_id}")
 
-while True:
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"Recording at: {timestamp}")
+#while True:
+timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+print(f"Sequence started at: {timestamp}")
     
-    with open("inference_results.txt", "w") as results_file:
-        for i in range(6):
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            results_file.write(f"* Recording {i+1} - {timestamp}\n")
-            arecord_command = f"arecord -D \"plughw:3,0\" -f S16_LE -r 16000 -d 10 -t wav output.wav"
-            subprocess.run(arecord_command, shell=True)
-#             results_file.write("* Done recording\n")
+with open("inference_results.txt", "w") as results_file:
+    for i in range(6):
+        rtimestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        results_file.write(f"* Recording {i+1} - {rtimestamp}\n")
+        arecord_command = f"arecord -D \"plughw:3,0\" -f S16_LE -r 16000 -d 5 -t wav output.wav"
+        subprocess.run(arecord_command, shell=True)
 
-            filename = 'output.wav'  # Change this to the recorded file's name
-            audio = load_wav_16k_mono(filename)
+        print(f"{i+1} Recorded at - {rtimestamp}")
 
-            results = yamnet_model(audio)
-            class_ = np.argmax(results, axis=0)
+        filename = 'output.wav'  # Change this to the recorded file's name
+        audio = load_wav_16k_mono(filename)
 
-            prediction = class_names[class_]
-#             results_file.write(f"Predicted class: {class_} - {prediction}\n")
+        results = noiseclassifier_model(audio)
+        your_top_class = np.argmax(results, axis=0)
+        
+        your_inferred_class = class_names[your_top_class]
+        class_probabilities = tf.nn.softmax(results, axis=-1).numpy()
 
-            your_top_class = class_
-            your_inferred_class = class_names[your_top_class]
-            class_probabilities = tf.nn.softmax(results, axis=-1).numpy()
+        results_file.write(f'Predicted class: {your_top_class} - {your_inferred_class} (Probability: {class_probabilities[your_top_class]:.4f})\n')
+        
+        # Print the inferred class and its probability
+        print(f'[Your model] The main noise is: {your_inferred_class} ({class_probabilities[your_top_class]})')
 
-            results_file.write(f'Predicted class: {class_} - {your_inferred_class} (Probability: {class_probabilities[your_top_class]:.4f})\n')
+        dest = f"inference/{i+1}-{your_inferred_class}-{class_probabilities[your_top_class]:.4f}.wav"
+        src = filename
+        results_file.write(dest + "\n")
+        os.rename(src, dest)
 
-            dest = f"14AugInference/{i+1}-{your_inferred_class}-{class_probabilities[your_top_class]:.4f}.wav"
-            src = 'output.wav'
-            results_file.write(dest + "\n")
-            os.rename(src, dest)
+        for j, class_prob in enumerate(class_probabilities):
+            class_namex = class_names[j]
+            results_file.write(f'Class: {class_namex}, Probability: {class_prob:.4f}\n')
 
-            for j, class_prob in enumerate(class_probabilities):
-                class_namex = class_names[j]
-                results_file.write(f'Class: {class_namex}, Probability: {class_prob:.4f}\n')
-
-            
-            time.sleep(600)  # Sleep for 1 minutes between recordings
+        
+        # time.sleep(600)  # Sleep for 10 minutes between recordings
+        time.sleep(10)  # Sleep for 1 minutes between recordings
 
 
     # Send the file once an hour
     #if datetime.now().minute == 0:  # Send at the start of each hour
-    with open(file_name, "rb") as file:
-        files = {"metrics_file": (file_name, file)}  # Use the correct field name
+with open(file_name, "rb") as file:
+    files = {"metrics_file": (file_name, file)}  # Use the correct field name
 
-        response = requests.post(url, data=data, files=files)
+    response = requests.post(url, data=data, files=files)
 
-        if response.status_code == 201:
-            print("File sent successfully")
-            print("Response status code:", response.status_code)
-            print("Response content:", response.content)
-        else:
-            print("Failed to send file")
-            print("Response status code:", response.status_code)
-            print("Response content:", response.content)
+    if response.status_code == 201:
+        print("File sent successfully")
+        print("Response status code:", response.status_code)
+        print("Response content:", response.content)
+    else:
+        print("Failed to send file")
+        print("Response status code:", response.status_code)
+        print("Response content:", response.content)
 
-    # Sleep for a minute before the next iteration
-    #time.sleep(60)  # 60 seconds = 1 minute
-        # Sleep for 10 minutes before the next iteration
-        time.sleep(60)  # 600 seconds = 10 minutes
+# Sleep for a minute before the next iteration
+time.sleep(60)  # 60 seconds = 1 minute
