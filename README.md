@@ -81,7 +81,52 @@ extraction (YAMNet) runs separately and the small quantized head does the classi
 about 784 KB (about 802,960 bytes), roughly a 4x reduction from the 3.04 MB float32 head. Edge Impulse reported the
 model as supported on the Arduino Nano 33 BLE profile and on MPU-class devices.
 
-## Running the edge scripts
+## Deployment variants
+
+The same classifier was taken to three kinds of target. Only the Raspberry Pi path has runnable code in this
+repository; the microcontroller path is documented from the notebook (see the note below the table).
+
+| Target | Model format | Where YAMNet runs | How it was produced | In this repo |
+|---|---|---|---|---|
+| Raspberry Pi 4 (MPU) | Keras SavedModel (`embedmodel/`), full waveform to 19 scores | On device, in TensorFlow | `serving_model.save(...)` in the notebook | `record-infer-upload.py`, `cmergedv2.py` |
+| Any MPU / mobile | TFLite (float16 or dynamic-range) | On device | `test1.tflite`, `test2.tflite` cells | notebook only |
+| Microcontroller (Arduino Nano 33 BLE and similar) | INT8 TFLite head, `[1,1024]` uint8 in, `[1,19]` uint8 out | Must be computed separately and passed in as the 1024-d embedding | Edge Impulse `ei.model.deploy(..., deploy_target='arduino')`, plus `tinymlgen` / `hex_to_c_array` C headers | `3Aug2023-9_tflite_model.tflite` (model only) |
+
+### Microcontroller profile (Edge Impulse estimates, INT8 head)
+
+| Device class | Inference time | RAM (TFLite / EON) | ROM (TFLite / EON) |
+|---|---|---|---|
+| Arduino Nano 33 BLE | 38 ms | 5.3 KB / 3.3 KB | 827 KB / 812 KB |
+| Cortex-M0+ at 40 MHz | 343 ms | 5.2 KB / 3.3 KB | 825 KB / 811 KB |
+| Cortex-M7 at 240 MHz | 6 ms | 5.3 KB / 3.3 KB | 827 KB / 812 KB |
+| Cortex-A72 class MPU | 1 ms | n/a | 803 KB |
+
+The model file is 802,960 bytes. These are profiler estimates, not measurements on hardware.
+
+**Important caveats**
+
+- The profile covers the **classifier head only**. YAMNet's feature extraction (MobileNet-style, several MB) is not
+  included, and it is what failed full-integer quantization. A standalone microcontroller still needs a way to produce
+  the 1024-d embedding, for example an on-device YAMNet port or the embedding computed on a gateway/phone and sent
+  over BLE.
+- The head alone uses about 812 to 827 KB of ROM, which is most of the Nano 33 BLE's 1 MB flash, so it fits but leaves
+  little room for the application.
+- The Arduino library zip (`blenoiselib.zip`) and the generated C headers (`model_code.h`, `updatedlib.h`) were
+  written to Google Drive / Colab storage and are **not** committed here. The notebook cells that generate them are
+  the source of truth.
+
+### Generating the microcontroller artifacts
+
+From `urbannoiseclassifierv4.ipynb`:
+
+1. **Edge Impulse Arduino library:** set `ei.API_KEY` from an environment variable, then run the `ei.model.deploy`
+   cell with `AudioInput(16000)` and `Classification(labels=my_classes)`. Unzip the result and add it through
+   Arduino IDE: Sketch > Include Library > Add .ZIP Library.
+2. **Raw C array for TensorFlow Lite Micro:** run the `hex_to_c_array` cell on the quantized model bytes to produce a
+   header you can include in a TFLM sketch.
+3. **tinymlgen:** `port(my_model, optimize=True)` writes `model_code.h` for the Keras head directly.
+
+## Running the Raspberry Pi scripts
 
 Tested design: Raspberry Pi with a USB microphone (`arecord -D plughw:3,0`).
 
